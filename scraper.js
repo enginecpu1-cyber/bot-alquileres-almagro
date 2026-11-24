@@ -380,6 +380,7 @@ async function main() {
   const solos = [];
   for (const l of ok) {
     const key = placeKey(l.address, l.rent);
+    l.placeKey = key;
     if (!key) {
       l.ids = [l.id];
       solos.push(l);
@@ -398,7 +399,9 @@ async function main() {
     }
   }
   const vigentes = [...groups.values(), ...solos].sort((a, b) => totalOf(a) - totalOf(b));
-  const fresh = vigentes.filter((g) => !g.ids.some((id) => sentIds[id]));
+  // Además del id, se recuerda el lugar: así un aviso enviado desde ML (PC) no se repite desde Zonaprop (nube).
+  const sentPlace = (g) => g.placeKey && sentIds["lugar:" + g.placeKey];
+  const fresh = vigentes.filter((g) => !g.ids.some((id) => sentIds[id]) && !sentPlace(g));
 
   console.log(`[filtro] ${raw.length} únicos → ${candidates.length} tras filtro básico → ${ok.length} ≤ ${formatMoney(TOTAL_MAX_ARS)} con expensas → ${fresh.length} nuevos`);
 
@@ -412,7 +415,7 @@ async function main() {
   // Chat nuevo que avisó el Worker al recibir /start (solo dígitos: viene de un input de workflow).
   const newChat = (process.env.NEW_CHAT_ID || "").trim();
   let bienvenida = null; // chat recién sumado: recibe todo lo vigente, no solo lo nuevo
-  if (/^\d+$/.test(newChat) && !chatIds.has(newChat)) {
+  if (/^\d+$/.test(newChat)) {
     bienvenida = newChat;
     chatIds.add(newChat);
     saveJson(CHATS_FILE, { ...loadJson(CHATS_FILE, { lastUpdateId: 0 }), chatIds: [...chatIds] });
@@ -442,7 +445,10 @@ async function main() {
 
   // Solo se marca como enviado lo que llegó a al menos un destinatario: si Telegram falla, se reintenta.
   const now = new Date().toISOString();
-  for (const l of delivered) for (const id of l.ids) sentIds[id] = now;
+  for (const l of delivered) {
+    for (const id of l.ids) sentIds[id] = now;
+    if (l.placeKey) sentIds["lugar:" + l.placeKey] = now;
+  }
   saveJson(STATE_FILE, sentIds);
   console.log(`Enviados ${delivered.size} de ${fresh.length} alquileres nuevos a ${chatIds.size} destinatario(s).`);
 }
