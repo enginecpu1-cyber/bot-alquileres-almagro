@@ -1,0 +1,1 @@
+{ "name": "bot-alquileres-almagro-cron", "private": true, "devDependencies": { "wrangler": "^4.0.0" } }

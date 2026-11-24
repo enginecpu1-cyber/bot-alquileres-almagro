@@ -1,0 +1,13 @@
+{
+  "name": "bot-alquileres-almagro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bot que busca monoambientes y 2 ambientes en alquiler en Almagro (CABA) hasta $800.000 con expensas y avisa por Telegram.",
+  "type": "commonjs",
+  "main": "scraper.js",
+  "scripts": { "start": "node scraper.js" },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "playwright": "^1.49.0"
+  }
+}
