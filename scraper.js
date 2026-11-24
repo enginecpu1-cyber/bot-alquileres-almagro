@@ -162,7 +162,11 @@ async function fetchML() {
         console.error(`[ml] página ${page + 1}: HTTP ${res.status}`);
         break;
       }
-      const cards = parseMLCards(await res.text());
+      const body = await res.text();
+      const cards = parseMLCards(body);
+      if (cards.length === 0) {
+        console.error(`[ml] página ${page + 1}: 0 tarjetas (HTTP ${res.status}, ${body.length} bytes, título: "${(body.match(/<title>([^<]*)/) || [])[1] || "?"}")`);
+      }
       all.push(...cards);
       if (cards.length < 48) break;
     } catch (err) {
@@ -170,6 +174,30 @@ async function fetchML() {
       break;
     }
     await sleep(500);
+  }
+  return all;
+}
+
+// Respaldo: si ML no entrega tarjetas por HTTP (IP de datacenter), se pide con Chromium.
+async function fetchMLBrowser(browser) {
+  const all = [];
+  for (let page = 0; page < ML_PAGES; page++) {
+    const ctx = await browser.newContext({ locale: "es-AR", userAgent: USER_AGENT });
+    const p = await ctx.newPage();
+    try {
+      await p.goto(buildMLUrl(page === 0 ? null : 1 + page * 48), { waitUntil: "domcontentloaded", timeout: 45000 });
+      await p.waitForSelector("li.ui-search-layout__item", { timeout: 20000 }).catch(() => {});
+      const cards = parseMLCards(await p.content());
+      if (cards.length === 0) console.error(`[ml-browser] página ${page + 1}: 0 tarjetas (título: "${(await p.title()).slice(0, 60)}")`);
+      all.push(...cards);
+      if (cards.length < 48) break;
+    } catch (err) {
+      console.error(`[ml-browser] página ${page + 1}: ${err.message.slice(0, 90)}`);
+      break;
+    } finally {
+      await ctx.close();
+    }
+    await sleep(2000);
   }
   return all;
 }
@@ -232,40 +260,40 @@ function parseZonaCards(html) {
   return out;
 }
 
-async function fetchZonaprop() {
-  let chromium;
+async function launchBrowser() {
   try {
-    ({ chromium } = require("playwright"));
-  } catch {
-    console.error("[zonaprop] playwright no instalado: se saltea Zonaprop");
-    return [];
+    const { chromium } = require("playwright");
+    return await chromium.launch({ headless: true });
+  } catch (err) {
+    console.error(`[browser] no disponible: ${err.message.slice(0, 120)}`);
+    return null;
   }
+}
+
+async function fetchZonaprop(browser) {
+  if (!browser) return [];
   const all = [];
-  let browser;
-  try {
-    browser = await chromium.launch({ headless: true });
-    for (let page = 1; page <= ZP_PAGES; page++) {
-      const suffix = page === 1 ? "" : `-pagina-${page}`;
-      const url = `https://www.zonaprop.com.ar/departamentos-alquiler-${BARRIO}-menos-${TOTAL_MAX_ARS}-pesos-orden-publicado-descendente${suffix}.html`;
+  for (let page = 1; page <= ZP_PAGES; page++) {
+    const suffix = page === 1 ? "" : `-pagina-${page}`;
+    const url = `https://www.zonaprop.com.ar/departamentos-alquiler-${BARRIO}-menos-${TOTAL_MAX_ARS}-pesos-orden-publicado-descendente${suffix}.html`;
+    let found = [];
+    for (let intento = 1; intento <= 2 && found.length === 0; intento++) {
       const ctx = await browser.newContext({ locale: "es-AR", userAgent: USER_AGENT });
       const p = await ctx.newPage();
       try {
         await p.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
         await p.waitForSelector('[data-qa="posting PROPERTY"]', { timeout: 20000 }).catch(() => {});
-        const found = parseZonaCards(await p.content());
-        if (found.length === 0) console.error(`[zonaprop] página ${page}: sin avisos (bloqueado o vacío)`);
-        all.push(...found);
-        if (found.length < 30) break;
+        found = parseZonaCards(await p.content());
       } catch (err) {
         console.error(`[zonaprop] página ${page}: ${err.message.slice(0, 90)}`);
       }
       await ctx.close();
-      await sleep(3000);
+      if (found.length === 0 && intento === 1) await sleep(6000);
     }
-  } catch (err) {
-    console.error(`[zonaprop] no pudo lanzar Chromium: ${err.message.slice(0, 120)}`);
-  } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (found.length === 0) console.error(`[zonaprop] página ${page}: sin avisos (bloqueado o vacío)`);
+    all.push(...found);
+    if (found.length < 30) break;
+    await sleep(3000);
   }
   return all;
 }
@@ -323,8 +351,8 @@ async function tgPost(method, body) {
 
 async function sendListing(chatId, l) {
   const caption = formatCaption(l);
-  if (l.image && (await tgPost("sendPhoto", { chat_id: chatId, photo: l.image, caption }))) return;
-  await tgPost("sendMessage", { chat_id: chatId, text: caption, disable_web_page_preview: false });
+  if (l.image && (await tgPost("sendPhoto", { chat_id: chatId, photo: l.image, caption }))) return true;
+  return tgPost("sendMessage", { chat_id: chatId, text: caption, disable_web_page_preview: false });
 }
 
 // --- Main ---
@@ -336,8 +364,18 @@ async function main() {
   const sentIds = loadJson(STATE_FILE, {});
   const expCache = loadJson(EXPENSAS_FILE, {});
 
-  const ml = await fetchML();
-  const zp = await fetchZonaprop();
+  const browser = await launchBrowser();
+  let ml, zp;
+  try {
+    ml = await fetchML();
+    if (ml.length === 0 && browser) {
+      console.error("[ml] HTTP sin tarjetas: se reintenta con Chromium");
+      ml = await fetchMLBrowser(browser);
+    }
+    zp = await fetchZonaprop(browser);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
   console.log(`[fuentes] MercadoLibre: ${ml.length} avisos, Zonaprop: ${zp.length} avisos`);
   if (ml.length === 0 && zp.length === 0) {
     console.error("Ninguna fuente devolvió avisos: posible bloqueo. No se toca el estado.");
@@ -404,21 +442,24 @@ async function main() {
     return;
   }
 
+  const delivered = new Set();
   for (const chatId of chatIds) {
-    await tgPost("sendMessage", {
+    const headerOk = await tgPost("sendMessage", {
       chat_id: chatId,
       text: `🏠 ${fresh.length} alquiler(es) nuevo(s) en Almagro — mono o 2 amb., hasta ${formatMoney(TOTAL_MAX_ARS)} con expensas:`,
     });
+    if (!headerOk) continue; // chat que no inició el bot o lo bloqueó: no se insiste con cada aviso
     for (const l of fresh) {
-      await sendListing(chatId, l);
+      if (await sendListing(chatId, l)) delivered.add(l);
       await sleep(400);
     }
   }
 
+  // Solo se marca como enviado lo que llegó a al menos un destinatario: si Telegram falla, se reintenta.
   const now = new Date().toISOString();
-  for (const l of fresh) for (const id of l.ids) sentIds[id] = now;
+  for (const l of delivered) for (const id of l.ids) sentIds[id] = now;
   saveJson(STATE_FILE, sentIds);
-  console.log(`Enviados ${fresh.length} alquileres nuevos a ${chatIds.size} destinatario(s).`);
+  console.log(`Enviados ${delivered.size} de ${fresh.length} alquileres nuevos a ${chatIds.size} destinatario(s).`);
 }
 
 main().catch((err) => {
