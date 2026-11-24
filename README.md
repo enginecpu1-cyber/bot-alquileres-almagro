@@ -3,6 +3,7 @@
 Avisa por Telegram monoambientes y 2 ambientes en alquiler en **Almagro (CABA)**, **hasta $800.000 con expensas** (alquiler + expensas).
 
 - Fuentes: MercadoLibre Inmuebles (HTTP; las expensas se leen de la ficha) y Zonaprop (Chromium headless; expensas en la tarjeta, orden por más recientes).
+- **MercadoLibre solo funciona desde una PC residencial.** Desde GitHub Actions (y Cloudflare) devuelve su página "tráfico sospechoso", sin avisos; en la nube el bot corre solo con Zonaprop. Para sumar ML hay que correr `node scraper.js` en una PC de casa.
 - No andan (verificado 2026-11-24): Argenprop (captcha), Properati (401), Inmuebles24 y Remax (403).
 - Un mismo aviso en dos portales se manda una sola vez (clave: calle + altura + alquiler), con el otro link como "También en".
 - Si el aviso no declara expensas, se manda igual marcado "⚠️ sin dato". Expensas < $10.000 se ignoran (dato roto).

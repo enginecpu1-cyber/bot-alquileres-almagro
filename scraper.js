@@ -164,6 +164,10 @@ async function fetchML() {
       }
       const body = await res.text();
       const cards = parseMLCards(body);
+      if (cards.length === 0 && /suspicious-traffic/.test(body)) {
+        console.error("[ml] bloqueado: MercadoLibre devuelve 'tráfico sospechoso' a IPs de datacenter (GitHub Actions). Funciona desde una PC residencial.");
+        break;
+      }
       if (cards.length === 0) {
         console.error(`[ml] página ${page + 1}: 0 tarjetas (HTTP ${res.status}, ${body.length} bytes, título: "${(body.match(/<title>([^<]*)/) || [])[1] || "?"}")`);
       }
@@ -174,30 +178,6 @@ async function fetchML() {
       break;
     }
     await sleep(500);
-  }
-  return all;
-}
-
-// Respaldo: si ML no entrega tarjetas por HTTP (IP de datacenter), se pide con Chromium.
-async function fetchMLBrowser(browser) {
-  const all = [];
-  for (let page = 0; page < ML_PAGES; page++) {
-    const ctx = await browser.newContext({ locale: "es-AR", userAgent: USER_AGENT });
-    const p = await ctx.newPage();
-    try {
-      await p.goto(buildMLUrl(page === 0 ? null : 1 + page * 48), { waitUntil: "domcontentloaded", timeout: 45000 });
-      await p.waitForSelector("li.ui-search-layout__item", { timeout: 20000 }).catch(() => {});
-      const cards = parseMLCards(await p.content());
-      if (cards.length === 0) console.error(`[ml-browser] página ${page + 1}: 0 tarjetas (título: "${(await p.title()).slice(0, 60)}")`);
-      all.push(...cards);
-      if (cards.length < 48) break;
-    } catch (err) {
-      console.error(`[ml-browser] página ${page + 1}: ${err.message.slice(0, 90)}`);
-      break;
-    } finally {
-      await ctx.close();
-    }
-    await sleep(2000);
   }
   return all;
 }
@@ -368,10 +348,6 @@ async function main() {
   let ml, zp;
   try {
     ml = await fetchML();
-    if (ml.length === 0 && browser) {
-      console.error("[ml] HTTP sin tarjetas: se reintenta con Chromium");
-      ml = await fetchMLBrowser(browser);
-    }
     zp = await fetchZonaprop(browser);
   } finally {
     if (browser) await browser.close().catch(() => {});
