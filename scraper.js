@@ -397,9 +397,8 @@ async function main() {
       if (!g.image && l.image) g.image = l.image;
     }
   }
-  const fresh = [...groups.values(), ...solos]
-    .filter((g) => !g.ids.some((id) => sentIds[id]))
-    .sort((a, b) => totalOf(a) - totalOf(b));
+  const vigentes = [...groups.values(), ...solos].sort((a, b) => totalOf(a) - totalOf(b));
+  const fresh = vigentes.filter((g) => !g.ids.some((id) => sentIds[id]));
 
   console.log(`[filtro] ${raw.length} únicos → ${candidates.length} tras filtro básico → ${ok.length} ≤ ${formatMoney(TOTAL_MAX_ARS)} con expensas → ${fresh.length} nuevos`);
 
@@ -410,9 +409,17 @@ async function main() {
 
   saveJson(EXPENSAS_FILE, expCache);
   const chatIds = new Set(await refreshChatIds());
+  // Chat nuevo que avisó el Worker al recibir /start (solo dígitos: viene de un input de workflow).
+  const newChat = (process.env.NEW_CHAT_ID || "").trim();
+  let bienvenida = null; // chat recién sumado: recibe todo lo vigente, no solo lo nuevo
+  if (/^\d+$/.test(newChat) && !chatIds.has(newChat)) {
+    bienvenida = newChat;
+    chatIds.add(newChat);
+    saveJson(CHATS_FILE, { ...loadJson(CHATS_FILE, { lastUpdateId: 0 }), chatIds: [...chatIds] });
+  }
   if (TELEGRAM_CHAT_ID) chatIds.add(String(TELEGRAM_CHAT_ID));
 
-  if (fresh.length === 0) {
+  if (fresh.length === 0 && !bienvenida) {
     console.log("Sin alquileres nuevos que cumplan los criterios en esta corrida.");
     saveJson(STATE_FILE, sentIds);
     return;
@@ -420,13 +427,15 @@ async function main() {
 
   const delivered = new Set();
   for (const chatId of chatIds) {
+    const lista = chatId === bienvenida ? vigentes : fresh;
+    if (lista.length === 0) continue;
     const headerOk = await tgPost("sendMessage", {
       chat_id: chatId,
-      text: `🏠 ${fresh.length} alquiler(es) nuevo(s) en Almagro — mono o 2 amb., hasta ${formatMoney(TOTAL_MAX_ARS)} con expensas:`,
+      text: `🏠 ${lista.length} alquiler(es) ${chatId === bienvenida ? "vigente(s)" : "nuevo(s)"} en Almagro — mono o 2 amb., hasta ${formatMoney(TOTAL_MAX_ARS)} con expensas:`,
     });
     if (!headerOk) continue; // chat que no inició el bot o lo bloqueó: no se insiste con cada aviso
-    for (const l of fresh) {
-      if (await sendListing(chatId, l)) delivered.add(l);
+    for (const l of lista) {
+      if (await sendListing(chatId, l) && fresh.includes(l)) delivered.add(l);
       await sleep(400);
     }
   }

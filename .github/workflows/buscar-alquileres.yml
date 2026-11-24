@@ -3,10 +3,20 @@ name: "Buscar alquileres Almagro"
 on:
   schedule:
     - cron: "*/30 * * * *" # respaldo; el disparador real es el Cloudflare Worker
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      new_chat:
+        description: "Chat de Telegram a sumar como destinatario (lo manda el Worker)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
+
+# Corridas en fila: así un chat sumado por una corrida ya figura en chat_ids.json para la siguiente.
+concurrency:
+  group: buscar-alquileres
+  cancel-in-progress: false
 
 jobs:
   buscar:
@@ -33,6 +43,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NEW_CHAT_ID: ${{ inputs.new_chat }}
 
       - name: Guardar estado (avisos enviados, chats, cache de expensas)
         run: |
